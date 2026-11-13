@@ -98,7 +98,7 @@ def matmul3d(a, b):
 # "Linear" and "LayerNorm" Classes
 ###############################################################################
 
-class Linear:
+class Linear(nn.Module):
     """
     Linear layer:
     y = xW^T + b
@@ -108,11 +108,12 @@ class Linear:
         out_features (int): Size of each output sample
     """
     def __init__(self, in_features, out_features):
+        super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         # Initialize weights using Xavier/Glorot uniform for better gradient flow
-        self.weight = torch.randn(out_features, in_features) * math.sqrt(2.0 / (in_features + out_features))
-        self.bias = torch.zeros(out_features)
+        self.weight = nn.Parameter(torch.randn(out_features, in_features) * math.sqrt(2.0 / (in_features + out_features)))
+        self.bias = nn.Parameter(torch.zeros(out_features))
     
     def forward(self, x):
         """
@@ -146,7 +147,7 @@ class Linear:
         
         return out
 
-class LayerNorm:
+class LayerNorm(nn.Module):
     """
     Layer normalization with learnable parameters:
     - Normalizes input across feature dimension
@@ -157,10 +158,11 @@ class LayerNorm:
         eps (float): Small constant for numerical stability
     """
     def __init__(self, dim, eps=1e-5):
+        super().__init__()
         self.eps = eps
         # Initialize gamma and beta to 1 and 0 by default
-        self.gamma = torch.ones(dim)
-        self.beta = torch.zeros(dim)
+        self.gamma = nn.Parameter(torch.ones(dim))
+        self.beta = nn.Parameter(torch.zeros(dim))
     
     def forward(self, x):
         """
@@ -178,7 +180,7 @@ class LayerNorm:
 # Positional Encoding
 ###############################################################################
 
-class PositionalEncoding:
+class PositionalEncoding(nn.Module):
     """
     Implements positional encoding as described in 'Attention Is All You Need'.
     
@@ -193,6 +195,7 @@ class PositionalEncoding:
         dropout_p (float): Dropout probability
     """
     def __init__(self, embed_size, max_seq_length=5000, dropout_p=0.1):
+        super().__init__()
         self.dropout_p = dropout_p
         self.max_seq_length = max_seq_length
         
@@ -211,10 +214,10 @@ class PositionalEncoding:
         # - Even indices get sine values
         # - Odd indices get cosine values
         pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[:embed_size // 2])
         
         # Add batch dimension and store for later use
-        self.pe = pe.unsqueeze(0)  # Shape: [1, max_seq_length, embed_size]
+        self.register_buffer("pe", pe.unsqueeze(0))  # Shape: [1, max_seq_length, embed_size]
     
     def forward(self, x, training=True):
         """
@@ -240,7 +243,7 @@ class PositionalEncoding:
 # Multi-Head Attention
 ###############################################################################
 
-class MultiHeadAttention:
+class MultiHeadAttention(nn.Module):
     """
     Multi-Head Self-Attention implemented as described in 
     'Attention Is All You Need' (Vaswani et al., 2017).
@@ -254,6 +257,7 @@ class MultiHeadAttention:
         num_heads (int): Number of attention heads to use
     """
     def __init__(self, embed_size, num_heads):
+        super().__init__()
         assert embed_size % num_heads == 0, "embed_size must be divisible by num_heads"
         
         self.embed_size = embed_size
@@ -339,7 +343,7 @@ class MultiHeadAttention:
 # Position-wise Feed-Forward Network
 ###############################################################################
 
-class FeedForward:
+class FeedForward(nn.Module):
     """
     Two-layer feed-forward network as described in 
     'Attention Is All You Need' (Vaswani et al., 2017).
@@ -353,6 +357,7 @@ class FeedForward:
         ff_hidden_mult (int): Multiplier for hidden dimension (typically 4)
     """
     def __init__(self, embed_size, ff_hidden_mult=4):
+        super().__init__()
         self.embed_size = embed_size
         self.hidden_size = embed_size * ff_hidden_mult
         
@@ -383,7 +388,7 @@ class FeedForward:
 # Transformer Block
 ###############################################################################
 
-class TransformerBlock:
+class TransformerBlock(nn.Module):
     """
     Single Transformer Block that combines:
       - Multi-Head Self-Attention
@@ -402,6 +407,7 @@ class TransformerBlock:
         ff_hidden_mult (int): Multiplier for feed-forward hidden dimension
     """
     def __init__(self, embed_size, num_heads, dropout_p=0.1, ff_hidden_mult=4):
+        super().__init__()
         self.attention = MultiHeadAttention(embed_size, num_heads)
         self.norm1 = LayerNorm(embed_size)
         self.norm2 = LayerNorm(embed_size)
@@ -436,7 +442,7 @@ class TransformerBlock:
 # Transformer Encoder
 ###############################################################################
 
-class TransformerEncoder:
+class TransformerEncoder(nn.Module):
     """
     Full transformer encoder stack consisting of:
       - Input embeddings
@@ -457,6 +463,7 @@ class TransformerEncoder:
     """
     def __init__(self, vocab_size, embed_size, num_layers, num_heads, 
                  max_seq_length=5000, dropout_p=0.1, ff_hidden_mult=4):
+        super().__init__()
         # Token embedding layer: converts token indices to vectors
         self.token_embedding = torch.nn.Embedding(vocab_size, embed_size)
         
@@ -467,10 +474,10 @@ class TransformerEncoder:
         self.pos_encoding = PositionalEncoding(embed_size, max_seq_length, dropout_p)
         
         # Stack of transformer blocks
-        self.layers = [
+        self.layers = nn.ModuleList([
             TransformerBlock(embed_size, num_heads, dropout_p, ff_hidden_mult)
             for _ in range(num_layers)
-        ]
+        ])
         
         # Final layer normalization (after the last transformer block)
         self.norm = LayerNorm(embed_size)
@@ -491,8 +498,7 @@ class TransformerEncoder:
             torch.Tensor: Output tensor of shape [N, seq_length, embed_size]
         """
         # Make sure x is a LongTensor for embedding lookup
-        if not isinstance(x, torch.LongTensor) and not isinstance(x, torch.cuda.LongTensor):
-            x = x.long()
+        x = x.long()
         
         # Convert token indices to embeddings and scale
         embedded = self.token_embedding(x) * self.embed_scale
@@ -513,7 +519,7 @@ class TransformerEncoder:
 # Complete Transformer Model (Encoder-Only)
 ###############################################################################
 
-class Transformer:
+class Transformer(nn.Module):
     """
     Encoder-only Transformer model for sequence classification or other tasks.
     
@@ -532,6 +538,7 @@ class Transformer:
     """
     def __init__(self, vocab_size, embed_size, num_layers, num_heads, num_classes,
                  max_seq_length=5000, dropout_p=0.1, ff_hidden_mult=4):
+        super().__init__()
         # Encoder stack
         self.encoder = TransformerEncoder(
             vocab_size, embed_size, num_layers, num_heads,
@@ -543,7 +550,7 @@ class Transformer:
         
         self.dropout_p = dropout_p
     
-    def forward(self, x, mask=None, training=True):
+    def forward(self, x, mask=None, training=None):
         """
         Apply the complete transformer model.
         
@@ -558,6 +565,9 @@ class Transformer:
         Returns:
             torch.Tensor: Output tensor of shape [N, num_classes]
         """
+        if training is None:
+            training = self.training
+
         # Apply encoder stack
         encoder_output = self.encoder.forward(x, mask=mask, training=training)
         
